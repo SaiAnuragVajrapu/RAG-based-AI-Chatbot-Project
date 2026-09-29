@@ -279,12 +279,10 @@ RAG-based-AI-Chatbot-Project/
 └── tests_sample_queries.py      # 5–6 sample test queries
 ```
 
-## 7. Streamlit URL
+## 7. Streamlit Deployed URL Link
 
 ```
-
-http://localhost:8501/
-
+https://rag-based-ai-chatbot-project-qlrz8qvzxys62qu99tzfnm.streamlit.app/
 
 ```
 
