@@ -278,3 +278,13 @@ RAG-based-AI-Chatbot-Project/
 ├── README.md
 └── tests_sample_queries.py      # 5–6 sample test queries
 ```
+
+## 7. Streamlit URL
+
+```
+
+http://localhost:8501/
+
+
+```
+
