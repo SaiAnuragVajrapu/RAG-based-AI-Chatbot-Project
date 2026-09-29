@@ -5,7 +5,7 @@ Features:
 - Chat interface with conversation history
 - Gemini response formatting
 - Retrieved context chunks
-- Retrieval confidence score
+- Retrieval score
 - Clear chat button
 - Error handling
 
@@ -13,8 +13,33 @@ Run:
     streamlit run streamlit_app.py
 """
 
+import os
 import streamlit as st
 
+
+# ==================================================
+# LOAD STREAMLIT CLOUD SECRETS
+# ==================================================
+
+try:
+    cloud_secrets = st.secrets
+
+    for key in [
+        "GOOGLE_API_KEY",
+        "PINECONE_API_KEY",
+        "PINECONE_INDEX_NAME",
+        "LLM_PROVIDER",
+    ]:
+        if key in cloud_secrets:
+            os.environ[key] = str(cloud_secrets[key])
+
+except (FileNotFoundError, RuntimeError):
+    # Locally, configuration can be loaded from .env
+    pass
+
+
+# Import AFTER loading Streamlit secrets.
+# src.graph calls validate_env() during import.
 from src.graph import build_rag_graph
 
 
@@ -93,7 +118,6 @@ def extract_answer(raw_answer):
         text_parts = []
 
         for item in raw_answer:
-
             if isinstance(item, str):
                 text_parts.append(item)
 
@@ -107,7 +131,6 @@ def extract_answer(raw_answer):
 
     # Handle dictionary responses
     if isinstance(raw_answer, dict):
-
         text = raw_answer.get(
             "text",
             raw_answer.get("content", ""),
@@ -150,11 +173,10 @@ def clean_context(raw_context):
     cleaned_chunks = []
 
     for chunk in raw_context:
-
         if chunk is None:
             continue
 
-        # Handle Document-like objects if returned
+        # Handle Document-like objects
         if hasattr(chunk, "page_content"):
             chunk = chunk.page_content
 
@@ -202,7 +224,6 @@ with st.sidebar:
     context_chunks = st.session_state.last_context
 
     if context_chunks:
-
         st.success(
             f"{len(context_chunks)} chunk(s) retrieved"
         )
@@ -211,7 +232,6 @@ with st.sidebar:
             context_chunks,
             start=1,
         ):
-
             with st.expander(
                 f"Chunk {i}",
                 expanded=False,
@@ -219,7 +239,6 @@ with st.sidebar:
                 st.text(chunk)
 
     else:
-
         st.info(
             "Ask a question to view retrieved document chunks."
         )
@@ -230,7 +249,6 @@ with st.sidebar:
         "🗑️ Clear Chat",
         use_container_width=True,
     ):
-
         st.session_state.messages = []
         st.session_state.last_context = []
         st.session_state.last_score = 0.0
@@ -243,7 +261,6 @@ with st.sidebar:
 # ==================================================
 
 for message in st.session_state.messages:
-
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
@@ -352,11 +369,10 @@ if query:
         with st.chat_message("assistant"):
             st.markdown(answer)
 
-        # Refresh the sidebar with the latest results
+        # Refresh sidebar with the latest results
         st.rerun()
 
     except Exception as e:
-
         st.error(
             "An error occurred while processing your question."
         )
