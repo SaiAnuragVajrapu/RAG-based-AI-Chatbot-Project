@@ -1,74 +1,193 @@
-"""LangGraph workflow definition & state logic.
+"""LangGraph workflow for the Agentic AI RAG chatbot."""
 
-Builds a stateful RAG graph:  START -> retrieve -> generate -> END
-  - retrieve: queries Pinecone for the top-k relevant chunks.
-  - generate: answers strictly from the retrieved context and assigns a
-    confidence score.
-"""
-
-from typing import List, TypedDict
+from typing import TypedDict, Any
 
 from langgraph.graph import StateGraph, START, END
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_pinecone import PineconeVectorStore
 
-from src.config import PINECONE_INDEX_NAME, TOP_K
-from src.providers import get_embeddings, get_llm
+from src.config import (
+    GOOGLE_API_KEY,
+    LLM_MODEL,
+    PINECONE_INDEX_NAME,
+    TOP_K,
+    validate_env,
+)
+from src.providers import get_embeddings
 
 
-class AgentState(TypedDict):
+# --------------------------------------------------
+# 1. Define the graph state
+# --------------------------------------------------
+
+class AgentState(TypedDict, total=False):
     question: str
-    context: List[str]
-    scores: List[float]
+    context: str
+    scores: list[float]
     answer: str
     score: float
 
 
-# If the average retrieval relevance is below this, we treat the question as
-# not covered by the document (low confidence).
-RELEVANCE_THRESHOLD = 0.5
+# --------------------------------------------------
+# 2. Validate configuration and initialize Gemini
+# --------------------------------------------------
+
+validate_env()
+
+llm = ChatGoogleGenerativeAI(
+    model=LLM_MODEL,
+    google_api_key=GOOGLE_API_KEY,
+    temperature=0,
+)
 
 
-def build_rag_graph(index_name: str = PINECONE_INDEX_NAME):
+# --------------------------------------------------
+# 3. Connect to the existing Pinecone index
+# --------------------------------------------------
+
+def get_vector_store():
+    """Connect to the existing Pinecone index."""
     embeddings = get_embeddings()
-    vectorstore = PineconeVectorStore(index_name=index_name, embedding=embeddings)
-    llm = get_llm()
 
-    # --- Nodes ---
-    def retrieve_node(state: AgentState):
-        # similarity_search_with_score returns (Document, relevance_score) pairs.
-        # For a cosine index, higher score = more relevant.
-        results = vectorstore.similarity_search_with_score(state["question"], k=TOP_K)
-        context_texts = [doc.page_content for doc, _ in results]
-        scores = [float(score) for _, score in results]
-        return {"context": context_texts, "scores": scores}
+    return PineconeVectorStore(
+        index_name=PINECONE_INDEX_NAME,
+        embedding=embeddings,
+    )
 
-    def generate_node(state: AgentState):
-        context_str = "\n\n".join(state["context"])
-        prompt = f"""You are a strict assistant. Answer the question relying ONLY on the context below.
-If the context does not contain enough info, state 'I cannot answer based on the provided document.'
 
-Context:
-{context_str}
+# --------------------------------------------------
+# 4. Retrieve relevant document chunks
+# --------------------------------------------------
 
-Question: {state['question']}"""
+def retrieve_node(state: AgentState) -> dict[str, Any]:
+    question = state.get("question", "").strip()
 
-        response = llm.invoke(prompt)
+    if not question:
+        return {
+            "context": "",
+            "scores": [],
+            "score": 0.0,
+        }
 
-        # Confidence = average relevance of the retrieved chunks (clamped to [0, 1]).
-        # This makes the score meaningful: in-document questions retrieve highly
-        # relevant chunks (high score); off-topic questions retrieve poor matches
-        # (low score). Falls back to 0.0 when nothing is retrieved.
-        scores = state.get("scores") or []
-        if scores:
-            avg = sum(scores) / len(scores)
-            confidence = max(0.0, min(1.0, round(avg, 4)))
-        else:
-            confidence = 0.0
+    vector_store = get_vector_store()
 
-        return {"answer": response.content, "score": confidence}
+    results = vector_store.similarity_search_with_score(
+        query=question,
+        k=TOP_K,
+    )
 
-    # --- Build Graph ---
+    context_parts = []
+    scores = []
+
+    for document, similarity_score in results:
+        if document.page_content:
+            context_parts.append(document.page_content)
+
+        scores.append(float(similarity_score))
+
+    context = "\n\n".join(context_parts)
+
+    average_score = (
+        sum(scores) / len(scores)
+        if scores
+        else 0.0
+    )
+
+    return {
+        "context": context,
+        "scores": scores,
+        "score": average_score,
+    }
+
+
+# --------------------------------------------------
+# 5. Generate a plain-text answer
+# --------------------------------------------------
+
+def generate_node(state: AgentState) -> dict[str, Any]:
+    question = state.get("question", "").strip()
+    context = state.get("context", "")
+
+    if not question:
+        return {
+            "answer": "Please enter a question."
+        }
+
+    if not context:
+        return {
+            "answer": (
+                "I couldn't find relevant information "
+                "in the Agentic AI eBook for this question."
+            )
+        }
+
+    prompt = f"""
+You are an Agentic AI assistant answering questions
+about the provided Agentic AI eBook.
+
+Instructions:
+- Answer using the retrieved context.
+- Explain concepts clearly.
+- Do not invent facts.
+- If the context does not contain the answer,
+  say that the information is not available in the retrieved text.
+
+Retrieved context:
+{context}
+
+User question:
+{question}
+
+Answer:
+"""
+
+    response = llm.invoke(prompt)
+    raw_answer = getattr(response, "content", response)
+
+    # Convert Gemini's content blocks into readable text.
+    if isinstance(raw_answer, str):
+        answer = raw_answer.strip()
+
+    elif isinstance(raw_answer, list):
+        text_parts = []
+
+        for item in raw_answer:
+            if isinstance(item, str):
+                text_parts.append(item)
+
+            elif isinstance(item, dict):
+                text = item.get("text")
+
+                if isinstance(text, str):
+                    text_parts.append(text)
+
+        answer = "\n\n".join(text_parts).strip()
+
+    elif isinstance(raw_answer, dict):
+        answer = str(
+            raw_answer.get("text")
+            or raw_answer.get("content")
+            or ""
+        ).strip()
+
+    else:
+        answer = str(raw_answer).strip()
+
+    if not answer:
+        answer = "The model returned an empty response. Please try again."
+
+    return {
+        "answer": answer,
+    }
+
+
+# --------------------------------------------------
+# 6. Build the RAG graph
+# --------------------------------------------------
+
+def build_rag_graph():
     workflow = StateGraph(AgentState)
+
     workflow.add_node("retrieve", retrieve_node)
     workflow.add_node("generate", generate_node)
 

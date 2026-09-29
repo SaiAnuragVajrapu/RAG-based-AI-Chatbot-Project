@@ -35,7 +35,7 @@ if LLM_PROVIDER == "gemini":
     EMBEDDING_MODEL = "models/gemini-embedding-001"
     EMBEDDING_DIMENSION = 3072
     # flash-lite has a more generous free-tier daily quota than 2.5-flash.
-    LLM_MODEL = "gemini-2.5-flash-lite"
+    LLM_MODEL = "gemini-3.5-flash-lite"
 else:
     # OpenAI (assignment default). text-embedding-3-small -> 1536 dims.
     EMBEDDING_MODEL = "text-embedding-3-small"
